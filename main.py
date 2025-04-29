@@ -5,6 +5,12 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 import pprint
+import json
+
+# Add your Guardian API key here
+GUARDIAN_API_URL = "https://content.guardianapis.com/search"
+GUARDIAN_API_KEY = "7ddc8b05-83cc-4ab0-a05c-5358208f0c31"
+
 
 # Constants
 API_URL = "https://api.open-meteo.com/v1/forecast"
@@ -40,6 +46,9 @@ WEATHER_CODES = {
 class WeatherApp(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # Initialize cycle counter
+        self.cycle_count = 0
 
         # Set window properties
         self.setWindowTitle("Futuristic Weather App")
@@ -80,6 +89,24 @@ class WeatherApp(QMainWindow):
         self.weather_timer = QTimer(self)
         self.weather_timer.timeout.connect(self.fetch_and_update_weather)
         self.weather_timer.start(600000)  # Update every 10 minutes
+
+        # Add a label for news
+        self.news_label = self.add_transparent_label("", 25, 230)
+        # Add a label for the section name and publication time
+        self.news_meta_label = self.add_transparent_label("", 120, 210)
+
+        # Initialize news data and index
+        self.news_items = []
+        self.current_news_index = 0
+
+        # Set a timer to cycle through news items
+        self.news_timer = QTimer(self)
+        self.news_timer.timeout.connect(self.cycle_news)
+        self.news_timer.start(5000)  # Change news every 5 seconds
+
+        # Fetch and update news
+        self.fetch_and_update_news()
+
 
     def add_transparent_label(self, text, x, y):
         label = QLabel(text, self)
@@ -141,6 +168,77 @@ class WeatherApp(QMainWindow):
     def fetch_and_update_weather(self):
         weather_data = self.fetch_weather_data()
         self.update_weather(weather_data)
+
+    def wrap_text(self, text, max_width):
+        words = text.split()
+        lines = []
+        current_line = ""
+
+        for word in words:
+            if len(current_line) + len(word) + 1 <= max_width:
+                current_line += (word + " ")
+            else:
+                lines.append(current_line.strip())
+                current_line = word + " "
+
+        if current_line:
+            lines.append(current_line.strip())
+
+        return "\n".join(lines)
+
+    def update_news(self, news_data):
+        # Extract the first 3 news items with metadata
+        self.news_items = [
+            {
+                "headline": self.wrap_text(result["webTitle"], 50),
+                "section": result["sectionName"],
+                "time": (datetime.strptime(result["webPublicationDate"], "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=1)).strftime("%H:%M"),  }
+            for result in news_data["response"]["results"][:10]
+        ]
+        self.cycle_news()
+
+    def cycle_news(self):
+        if self.news_items:
+            current_item = self.news_items[self.current_news_index]
+            self.news_label.setText(current_item["headline"])
+            self.news_meta_label.setText(
+                f" {current_item['time']}     {current_item['section']}    {self.current_news_index + 1}/{len(self.news_items)}"
+            )
+            self.news_label.adjustSize()
+            self.news_meta_label.adjustSize()
+
+            # Calculate display time based on word count (10 words per second)
+            word_count = len(current_item["headline"].split())
+            display_time = max(4000, (word_count / 15) * 4000)  # Minimum 3 seconds
+
+            # Restart the timer with the calculated display time
+            self.news_timer.start(int(display_time))
+
+            # Update index and cycle count
+            self.current_news_index = (self.current_news_index + 1) % len(self.news_items)
+            if self.current_news_index == 0:
+                self.cycle_count += 1
+
+            # Fetch new news data after 4 full cycles
+            if self.cycle_count >= 4:
+                self.cycle_count = 0
+                self.fetch_and_update_news()
+    def fetch_news_data(self):
+        params = {
+            "api-key": GUARDIAN_API_KEY,
+            "page-size": 10,  # Fetch only the first 3 news items
+            "order-by": "newest",
+            "sections": "business,news,politics,science,technology,us-news,world",  # Filter by sectionIds
+
+        }
+        response = requests.get(GUARDIAN_API_URL, params=params)
+        print(response.url)
+        response.raise_for_status()
+        return response.json()
+
+    def fetch_and_update_news(self):
+        news_data = self.fetch_news_data()
+        self.update_news(news_data)
 
 def main():
     app = QApplication([])
