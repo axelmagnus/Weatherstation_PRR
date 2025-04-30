@@ -11,6 +11,12 @@ import json
 GUARDIAN_API_URL = "https://content.guardianapis.com/search"
 GUARDIAN_API_KEY = "7ddc8b05-83cc-4ab0-a05c-5358208f0c31"
 
+# Adafruit IO credentials
+ADAFRUIT_IO_USERNAME = "axelmagnus"
+ADAFRUIT_IO_KEY = "1a20315d078d4304bee799ce4b2af0e7"
+ADAFRUIT_IO_URL = "https://io.adafruit.com/api/v2"
+
+
 
 # Constants
 API_URL = "https://api.open-meteo.com/v1/forecast"
@@ -63,6 +69,10 @@ class WeatherApp(QMainWindow):
         # Set futuristic font
         self.futuristic_font = QFont("Orbitron", 14, QFont.Bold)
 
+        # Add a status label
+        self.status_label = self.add_transparent_label("", 25, 293)
+        self.status_label.setStyleSheet("color: black; background: transparent;")
+
         # Add labels
         self.time_label = self.add_transparent_label("", 400, 285)
         self.weather_labels = {
@@ -107,6 +117,56 @@ class WeatherApp(QMainWindow):
         # Fetch and update news
         self.fetch_and_update_news()
 
+        # Add labels for Adafruit IO data
+        self.adafruit_labels = {
+            "temp": self.add_transparent_label("", 25, 110),
+            "voltage": self.add_transparent_label("", 110, 143),
+            "percent": self.add_transparent_label("", 110, 165),
+            "current": self.add_transparent_label("", 279, 143),
+            "hum": self.add_transparent_label("", 279, 165),
+        }
+
+        self.adafruit_labels["temp"].setFont(QFont("Orbitron", 22, QFont.Bold))
+
+        # Timer to fetch Adafruit IO data every 10 minutes
+        self.adafruit_timer = QTimer(self)
+        self.adafruit_timer.timeout.connect(self.fetch_and_update_adafruit_data)
+        self.adafruit_timer.start(600000)  # 10 minutes
+
+        # Fetch initial data
+        self.fetch_and_update_adafruit_data()
+
+
+    def fetch_adafruit_data(self, feed_key):
+        url = f"{ADAFRUIT_IO_URL}/{ADAFRUIT_IO_USERNAME}/feeds/{feed_key}/data/last"
+        headers = {"X-AIO-Key": ADAFRUIT_IO_KEY}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        self.status_label.setText(f"AIO feeds updated {datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}.")
+
+        return response.json()["value"]
+
+    def fetch_and_update_adafruit_data(self):
+        try:
+            # Fetch data for each feed
+            temp = self.fetch_adafruit_data("esp32s2.temp")
+            voltage = self.fetch_adafruit_data("esp32s2.voltage")
+            percent = self.fetch_adafruit_data("esp32s2.percent")
+            current= self.fetch_adafruit_data("esp32s2.current")
+            hum = self.fetch_adafruit_data("esp32s2.hum")
+
+            # Update labels
+            self.adafruit_labels["temp"].setText(f"{float(temp):.1f} °C")
+            self.adafruit_labels["voltage"].setText(f"{float(voltage):.2f} V")
+            self.adafruit_labels["percent"].setText(f"{float(percent):.1f} %")
+            self.adafruit_labels["current"].setText(f"{float(current):.0f} mA")
+            self.adafruit_labels["hum"].setText(f"{float(hum):.0f} %")
+
+            for label in self.adafruit_labels.values():
+                label.adjustSize()
+        except Exception as e:
+            print(f"Error fetching Adafruit IO data: {e}")
+
 
     def add_transparent_label(self, text, x, y):
         label = QLabel(text, self)
@@ -135,6 +195,8 @@ class WeatherApp(QMainWindow):
         response = requests.get(API_URL, params=params)
         print(response.url)  # Print the full URL used for the API call
         response.raise_for_status()
+        # Update the status label with a timestamp
+        self.status_label.setText(f"Weather data updated {datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}.")
         return response.json()
 
     def update_weather(self, weather_data):
@@ -190,7 +252,7 @@ class WeatherApp(QMainWindow):
         # Extract the first 3 news items with metadata
         self.news_items = [
             {
-                "headline": self.wrap_text(result["webTitle"], 50),
+                "headline": self.wrap_text(result["webTitle"], 45),
                 "section": result["sectionName"],
                 "time": (datetime.strptime(result["webPublicationDate"], "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=1)).strftime("%H:%M"),  }
             for result in news_data["response"]["results"][:10]
@@ -209,7 +271,7 @@ class WeatherApp(QMainWindow):
 
             # Calculate display time based on word count (10 words per second)
             word_count = len(current_item["headline"].split())
-            display_time = max(4000, (word_count / 15) * 4000)  # Minimum 3 seconds
+            display_time = max(4000, (word_count / 10) * 3000+1500)  # Minimum 3 seconds
 
             # Restart the timer with the calculated display time
             self.news_timer.start(int(display_time))
@@ -234,6 +296,8 @@ class WeatherApp(QMainWindow):
         response = requests.get(GUARDIAN_API_URL, params=params)
         print(response.url)
         response.raise_for_status()
+        self.status_label.setText(f"News updated {datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}.")
+
         return response.json()
 
     def fetch_and_update_news(self):
